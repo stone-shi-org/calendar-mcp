@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  calendar-mcp:
+    image: registry.shifamily.com/homestack/calendar-mcp:latest
+    container_name: calendar-mcp
+    env_file:
+      - ai.env
+    environment:
+      - CALENDAR_MCP_TRANSPORT=sse
+    ports:
+      - "4004:8000"
+    volumes:
+      - calendar-mcp-config:/app/profiles
+    restart: unless-stopped
+    command: ["python", "mcp_server.py"]
+    networks:
+      - home-net
+
+volumes:
+  calendar-mcp-config:
+
+networks:
+  home-net:
+    external: true

@@ -1,0 +1,26 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.env
+ai.env
+.venv
+env/
+venv/
+ENV/
+
+# OS-specific
+.DS_Store
+Thumbs.db
+
+# Project-specific
+version.txt
+profiles/**/*.env
+profiles/**/*.db
+profiles/**/*.ics
+profiles/**/*.json
+credentials.json
+google_cli_client.json
+
