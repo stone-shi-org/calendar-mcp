@@ -9,6 +9,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger("calendar_mcp.config")
 
+# Capture initial system environment keys to avoid overwriting variables set explicitly via Docker/OS
+_SYSTEM_ENV_KEYS = set(os.environ.keys())
+
+
 class AccountConfig(BaseModel):
     type: str = "caldav"  # "caldav" or "google"
     name: Optional[str] = None
@@ -113,14 +117,21 @@ class Settings(BaseSettings):
         profile_env = profile_dir / ".env"
         env_file = profile_env if profile_env.exists() else workspace_root / ".env"
         
+        # Clear any previously loaded profile/default environment variables to prevent contamination
+        for k in list(os.environ.keys()):
+            if k.startswith("CALENDAR_") or k == "CALENDAR_ACCOUNTS":
+                if k not in _SYSTEM_ENV_KEYS:
+                    del os.environ[k]
+                    
         # Manually load and inject env variables from the active file
         env_vars = load_env_manually(env_file)
         for k, v in env_vars.items():
             if k.startswith("CALENDAR_") or k == "CALENDAR_ACCOUNTS":
-                if k not in os.environ:
-                    os.environ[k] = v
+                if k in _SYSTEM_ENV_KEYS:
+                    # System/Docker environment variables have higher priority
+                    continue
+                os.environ[k] = v
 
-        
         # Instantiate Settings with specific environment file
         s = cls(_env_file=env_file)
         s.workspace_dir = profile_dir
