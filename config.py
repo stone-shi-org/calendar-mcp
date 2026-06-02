@@ -117,7 +117,9 @@ class Settings(BaseSettings):
         env_vars = load_env_manually(env_file)
         for k, v in env_vars.items():
             if k.startswith("CALENDAR_") or k == "CALENDAR_ACCOUNTS":
-                os.environ[k] = v
+                if k not in os.environ:
+                    os.environ[k] = v
+
         
         # Instantiate Settings with specific environment file
         s = cls(_env_file=env_file)
