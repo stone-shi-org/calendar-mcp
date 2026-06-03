@@ -100,6 +100,10 @@ class GoogleCalendarClientWrapper:
         self._authenticate()
 
     def _authenticate(self):
+        import os
+        # Allow insecure (http) redirects/transports for local testing and console redirect flows
+        os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
+
         token_path = resolve_google_path(self.config.token_path, self.profile_dir)
         credentials_path = resolve_google_path(self.config.credentials_path, self.profile_dir)
         target_token_path = self.profile_dir / Path(self.config.token_path).name
