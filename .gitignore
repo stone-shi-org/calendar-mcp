@@ -23,4 +23,4 @@ profiles/**/*.ics
 profiles/**/*.json
 credentials.json
 google_cli_client.json
-
+test-reports/
