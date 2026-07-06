@@ -125,9 +125,9 @@ class TestResolveGooglePath:
         original_exists = Path.exists
         def mocked_exists(path_self):
             path_str = str(path_self)
-            if "email-triage" in path_str and path_str.endswith("google_cli_client.json"):
+            if "email-triage" in path_str:
                 return True
-            if str(temp_dir) in path_str and path_str.endswith("google_cli_client.json"):
+            if str(temp_dir) in path_str:
                 return False
             return original_exists(path_self)
         with patch.object(Path, "exists", mocked_exists):
