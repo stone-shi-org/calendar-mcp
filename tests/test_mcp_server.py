@@ -12,6 +12,8 @@ from mcp_server import (
     get_resources,
     get_version_info,
     current_profile,
+    mcp,
+    SERVER_INSTRUCTIONS,
 )
 
 
@@ -51,6 +53,28 @@ class TestRobustFastMCP:
             with patch("mcp.server.fastmcp.FastMCP.call_tool", new_callable=AsyncMock) as super_call:
                 await mcp_instance.call_tool("other_tool", {})
                 super_call.assert_called_once_with("other_tool", {})
+
+
+# ---------------------------------------------------------------------------
+# Server initialize() instructions field (CM-1)
+# ---------------------------------------------------------------------------
+
+class TestServerInstructions:
+    def test_module_server_has_non_empty_instructions(self):
+        # Populates InitializeResult.instructions in the MCP handshake.
+        assert isinstance(mcp.instructions, str)
+        assert mcp.instructions.strip() != ""
+        assert mcp.instructions == SERVER_INSTRUCTIONS
+
+    def test_instructions_mentions_tool_ordering_and_profile_caveat(self):
+        text = SERVER_INSTRUCTIONS.lower()
+        assert "list_calendars" in text
+        assert "search_events" in text
+        assert "profile" in text
+
+    def test_constructor_forwards_instructions_to_low_level_server(self):
+        instance = RobustFastMCP("test", instructions="hello world")
+        assert instance.instructions == "hello world"
 
 
 # ---------------------------------------------------------------------------

@@ -59,12 +59,26 @@ class RobustFastMCP(FastMCP):
         return await super().call_tool(cleaned_name, arguments)
 
 security = TransportSecuritySettings(enable_dns_rebinding_protection=False)
+
+SERVER_INSTRUCTIONS = (
+    "iCloud/Google Calendar MCP server. Tools: list_calendars, search_events "
+    "(read-only) and create_event, update_event, delete_event (mutating). "
+    "Call list_calendars first to discover valid `profile` and calendar names, "
+    "then search_events to check for existing/conflicting events before calling "
+    "a mutating tool -- this server does not dedupe or confirm destructive calls "
+    "for you. Most tools take a `profile` argument (default \"default\") that "
+    "selects which CalDAV/Google account credentials to use; passing the wrong "
+    "profile silently operates on the wrong calendar. See each tool's own "
+    "schema/description for parameter details."
+)
+
 mcp = RobustFastMCP(
     "iCloud Calendar MCP",
     host=settings.mcp_host,
     port=settings.mcp_port,
     transport_security=security,
-    warn_on_duplicate_tools=False
+    warn_on_duplicate_tools=False,
+    instructions=SERVER_INSTRUCTIONS
 )
 
 from starlette.middleware.base import BaseHTTPMiddleware
