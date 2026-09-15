@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch, AsyncMock, mock_open
 import pytest
 
 from mcp_server import (
-    RobustFastMCP,
+    RobustMCPServer,
     load_token_profile_map,
     MCPTokenAuthMiddleware,
     get_resources,
@@ -18,41 +18,49 @@ from mcp_server import (
 
 
 # ---------------------------------------------------------------------------
-# RobustFastMCP
+# RobustMCPServer
 # ---------------------------------------------------------------------------
 
-class TestRobustFastMCP:
+class TestRobustMCPServer:
     @pytest.fixture
     def mcp_instance(self):
-        return RobustFastMCP("test")
+        return RobustMCPServer("test")
 
     @pytest.mark.asyncio
     async def test_strips_calendar_mcp_prefix(self, mcp_instance):
         with patch.object(mcp_instance._tool_manager, "_tools", {"list_calendars": True}):
-            with patch("mcp.server.fastmcp.FastMCP.call_tool", new_callable=AsyncMock) as super_call:
+            with patch("mcp.server.mcpserver.MCPServer.call_tool", new_callable=AsyncMock) as super_call:
                 await mcp_instance.call_tool("calendar_mcp__list_calendars", {})
-                super_call.assert_called_once_with("list_calendars", {})
+                super_call.assert_called_once_with("list_calendars", {}, None)
 
     @pytest.mark.asyncio
     async def test_strips_calendar_mcp_hyphen_prefix(self, mcp_instance):
         with patch.object(mcp_instance._tool_manager, "_tools", {"list_calendars": True}):
-            with patch("mcp.server.fastmcp.FastMCP.call_tool", new_callable=AsyncMock) as super_call:
+            with patch("mcp.server.mcpserver.MCPServer.call_tool", new_callable=AsyncMock) as super_call:
                 await mcp_instance.call_tool("calendar-mcp__list_calendars", {})
-                super_call.assert_called_once_with("list_calendars", {})
+                super_call.assert_called_once_with("list_calendars", {}, None)
 
     @pytest.mark.asyncio
     async def test_fuzzy_matches_prefix(self, mcp_instance):
         with patch.object(mcp_instance._tool_manager, "_tools", {"list_calendars": True, "search_events": True}):
-            with patch("mcp.server.fastmcp.FastMCP.call_tool", new_callable=AsyncMock) as super_call:
+            with patch("mcp.server.mcpserver.MCPServer.call_tool", new_callable=AsyncMock) as super_call:
                 await mcp_instance.call_tool("list_cal", {})
-                super_call.assert_called_once_with("list_calendars", {})
+                super_call.assert_called_once_with("list_calendars", {}, None)
 
     @pytest.mark.asyncio
     async def test_passes_through_if_no_match(self, mcp_instance):
         with patch.object(mcp_instance._tool_manager, "_tools", {"list_calendars": True}):
-            with patch("mcp.server.fastmcp.FastMCP.call_tool", new_callable=AsyncMock) as super_call:
+            with patch("mcp.server.mcpserver.MCPServer.call_tool", new_callable=AsyncMock) as super_call:
                 await mcp_instance.call_tool("other_tool", {})
-                super_call.assert_called_once_with("other_tool", {})
+                super_call.assert_called_once_with("other_tool", {}, None)
+
+    @pytest.mark.asyncio
+    async def test_forwards_context_through_fuzzy_match(self, mcp_instance):
+        sentinel_context = object()
+        with patch.object(mcp_instance._tool_manager, "_tools", {"list_calendars": True}):
+            with patch("mcp.server.mcpserver.MCPServer.call_tool", new_callable=AsyncMock) as super_call:
+                await mcp_instance.call_tool("list_cal", {}, sentinel_context)
+                super_call.assert_called_once_with("list_calendars", {}, sentinel_context)
 
 
 # ---------------------------------------------------------------------------
@@ -73,7 +81,7 @@ class TestServerInstructions:
         assert "profile" in text
 
     def test_constructor_forwards_instructions_to_low_level_server(self):
-        instance = RobustFastMCP("test", instructions="hello world")
+        instance = RobustMCPServer("test", instructions="hello world")
         assert instance.instructions == "hello world"
 
 

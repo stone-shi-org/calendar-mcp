@@ -19,20 +19,25 @@ logging.basicConfig(
 logger = logging.getLogger("calendar_mcp.mcp_server")
 
 try:
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 except ImportError:
-    logger.error("The 'mcp' SDK is not installed in the current virtual environment.")
+    logger.error(
+        "The 'mcp' SDK is not installed in the current virtual environment, "
+        "or is an incompatible major version (this server targets the mcp 2.x "
+        "'MCPServer' API; see requirements.txt)."
+    )
     sys.exit(1)
 
 # Import local client modules
 from config import Settings, settings
 from calendar_client import CalendarClient
 
-# Initialize FastMCP server with custom transport settings
+# Initialize MCPServer; transport-specific settings (host/port/transport_security)
+# are supplied later, to run()/sse_app() rather than the constructor (mcp 2.x API).
 from mcp.server.transport_security import TransportSecuritySettings
 
-class RobustFastMCP(FastMCP):
-    async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
+class RobustMCPServer(MCPServer):
+    async def call_tool(self, name: str, arguments: dict[str, Any], context: Any = None) -> Any:
         cleaned_name = name
         # Resolve potential tool name prefixes or truncations
         while True:
@@ -45,7 +50,7 @@ class RobustFastMCP(FastMCP):
 
         tools = getattr(self._tool_manager, "_tools", {})
         if cleaned_name in tools:
-            return await super().call_tool(cleaned_name, arguments)
+            return await super().call_tool(cleaned_name, arguments, context)
 
         # Fallback: check if any registered tool starts with cleaned_name
         matching_tools = sorted(
@@ -54,9 +59,9 @@ class RobustFastMCP(FastMCP):
         )
         if matching_tools:
             logger.info("Fuzzy matched tool call '%s' (cleaned: '%s') to registered tool '%s'", name, cleaned_name, matching_tools[0])
-            return await super().call_tool(matching_tools[0], arguments)
+            return await super().call_tool(matching_tools[0], arguments, context)
 
-        return await super().call_tool(cleaned_name, arguments)
+        return await super().call_tool(cleaned_name, arguments, context)
 
 security = TransportSecuritySettings(enable_dns_rebinding_protection=False)
 
@@ -72,11 +77,8 @@ SERVER_INSTRUCTIONS = (
     "schema/description for parameter details."
 )
 
-mcp = RobustFastMCP(
+mcp = RobustMCPServer(
     "iCloud Calendar MCP",
-    host=settings.mcp_host,
-    port=settings.mcp_port,
-    transport_security=security,
     warn_on_duplicate_tools=False,
     instructions=SERVER_INSTRUCTIONS
 )
@@ -343,8 +345,8 @@ if __name__ == "__main__":
         masked_map = {k[:4] + "...": v for k, v in token_map.items()}
         logger.info("Starting SSE MCP server. Loaded profile token mappings: %s", masked_map)
         
-        # Get standard FastMCP SSE Starlette app
-        app = mcp.sse_app()
+        # Get standard MCPServer SSE Starlette app
+        app = mcp.sse_app(host=settings.mcp_host, transport_security=security)
         
         # Add token validation middleware
         app.add_middleware(MCPTokenAuthMiddleware, token_map=token_map)
