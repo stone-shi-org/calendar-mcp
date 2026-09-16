@@ -1,6 +1,6 @@
 # iCloud Calendar MCP Server
 
-A Model Context Protocol (MCP) server that provides full Create, Read, Update, Delete (CRUD) operations and searching capabilities for your iCloud Calendar (or any standard CalDAV calendar server). It supports multi-profile configurations, token-based authentication, and can run over either Standard Input/Output (Stdio) or Server-Sent Events (SSE) HTTP transport.
+A Model Context Protocol (MCP) server that provides full Create, Read, Update, Delete (CRUD) operations and searching capabilities for your iCloud Calendar (or any standard CalDAV calendar server). It supports multi-profile configurations, token-based authentication, and can run over Standard Input/Output (Stdio), Server-Sent Events (SSE), or Streamable HTTP transport.
 
 ---
 
@@ -14,7 +14,8 @@ A Model Context Protocol (MCP) server that provides full Create, Read, Update, D
   - `update_event` - Edit existing events by UID.
   - `delete_event` - Remove events by UID.
 - **Multi-Tenant Profile Management:** Load dynamic configurations (different Apple IDs or profiles) under the `profiles/` directory.
-- **SSE Token Authorization Middleware:** Secure your SSE transport endpoints using profile-specific bearer tokens.
+- **Multiple HTTP Transports:** Run over legacy SSE (`/sse`) or the newer Streamable HTTP transport (`/mcp` by default).
+- **Token Authorization Middleware:** Secure your SSE and Streamable HTTP transport endpoints using profile-specific bearer tokens.
 - **Docker Ready:** Built-in `Dockerfile`, `docker-compose.yml`, and `build.sh` supporting version tracking.
 
 ---
@@ -41,7 +42,13 @@ CALENDAR_PASSWORD=xxxx-xxxx-xxxx-xxxx  # App-Specific Password
 CALENDAR_MCP_TRANSPORT=stdio
 CALENDAR_MCP_HOST=0.0.0.0
 CALENDAR_MCP_PORT=8000
+
+# Only used when CALENDAR_MCP_TRANSPORT=streamable-http (default shown)
+CALENDAR_MCP_STREAMABLE_HTTP_PATH=/mcp
 ```
+
+`CALENDAR_MCP_TRANSPORT` accepts `stdio`, `sse`, or `streamable-http` (the
+underscore spelling `streamable_http` is also accepted as an alias).
 
 ### 2. Multi-Profile Configuration
 
@@ -57,7 +64,7 @@ When calling tools, you can pass the `profile` argument (e.g., `profile="work"`)
 
 ### Generate Profile Access Tokens
 
-To secure the HTTP SSE server, you can generate random access tokens for your profiles using the bundled command-line utility.
+To secure the HTTP (SSE or Streamable HTTP) server, you can generate random access tokens for your profiles using the bundled command-line utility.
 
 Run the script to generate a token for the default profile:
 ```bash
@@ -93,7 +100,15 @@ Configure the transport option in your `.env` or set it in your environment:
 export CALENDAR_MCP_TRANSPORT=sse
 ./venv/bin/python mcp_server.py
 ```
-The server will start an HTTP service (defaulting to `http://0.0.0.0:8000`).
+The server will start an HTTP service (defaulting to `http://0.0.0.0:8000`) exposing the SSE endpoint at `/sse`.
+
+### Option C: Running with Streamable HTTP Transport (HTTP Server)
+[Streamable HTTP](https://modelcontextprotocol.io/) is the newer bidirectional MCP transport (streaming responses over plain HTTP) and is the recommended option for new HTTP-based clients. Configure it via:
+```bash
+export CALENDAR_MCP_TRANSPORT=streamable-http
+./venv/bin/python mcp_server.py
+```
+The server will start an HTTP service (defaulting to `http://0.0.0.0:8000`) exposing the Streamable HTTP endpoint at `/mcp` (configurable via `CALENDAR_MCP_STREAMABLE_HTTP_PATH`). As with SSE, requests must present a valid profile token (see below).
 
 ---
 

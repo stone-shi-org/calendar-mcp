@@ -3,8 +3,15 @@ import json
 import logging
 from pathlib import Path
 from typing import Optional, List, Dict
-from pydantic import Field, BaseModel
+from pydantic import Field, BaseModel, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+# Transport values accepted for CALENDAR_MCP_TRANSPORT. "streamable_http" is an
+# underscore alias for "streamable-http" (the canonical value expected by the
+# `mcp` SDK's MCPServer.run()/streamable_http_app()).
+VALID_MCP_TRANSPORTS = ("stdio", "sse", "streamable-http")
+_TRANSPORT_ALIASES = {"streamable_http": "streamable-http"}
 
 
 logger = logging.getLogger("calendar_mcp.config")
@@ -69,9 +76,30 @@ class Settings(BaseSettings):
     mcp_transport: str = "stdio"
     mcp_host: str = "0.0.0.0"
     mcp_port: int = 8000
-    
+
+    # Streamable HTTP endpoint path (used when mcp_transport is "streamable-http")
+    mcp_streamable_http_path: str = "/mcp"
+
     # Profile Access Token (for SSE authorization)
     profile_token: str = ""
+
+    @field_validator("mcp_transport", mode="before")
+    @classmethod
+    def _normalize_mcp_transport(cls, v):
+        """Normalize CALENDAR_MCP_TRANSPORT so "streamable_http" (underscore) is
+        accepted as an alias of the canonical "streamable-http" (hyphen) value
+        expected by the mcp SDK, and so casing/whitespace don't matter."""
+        if isinstance(v, str):
+            normalized = v.strip().lower()
+            return _TRANSPORT_ALIASES.get(normalized, normalized)
+        return v
+
+    @field_validator("mcp_streamable_http_path", mode="before")
+    @classmethod
+    def _normalize_streamable_http_path(cls, v):
+        if isinstance(v, str) and v and not v.startswith("/"):
+            return "/" + v
+        return v
 
     @property
     def accounts(self) -> List[AccountConfig]:

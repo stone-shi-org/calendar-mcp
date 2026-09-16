@@ -251,6 +251,111 @@ class TestMCPTokenAuthMiddleware:
         await middleware(scope, None, AsyncMock())
         app.assert_called_once()
 
+    # -- Streamable HTTP ("/mcp") coverage (CM-2) --
+
+    @pytest.mark.asyncio
+    async def test_protects_mcp_path_by_default(self, token_map, mock_load_token_map):
+        app = AsyncMock()
+        send = AsyncMock()
+        middleware = MCPTokenAuthMiddleware(app, token_map)
+
+        scope = {
+            "type": "http",
+            "path": "/mcp",
+            "headers": [],
+            "query_string": b"",
+        }
+        await middleware(scope, None, send)
+
+        # No token provided -> rejected, app never invoked
+        send.assert_called()
+        app.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_authorizes_mcp_path_with_bearer_token(self, token_map, mock_load_token_map):
+        app = AsyncMock()
+        middleware = MCPTokenAuthMiddleware(app, token_map)
+
+        scope = {
+            "type": "http",
+            "path": "/mcp",
+            "headers": [(b"authorization", b"Bearer abc123")],
+            "query_string": b"",
+        }
+        await middleware(scope, None, AsyncMock())
+        app.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_sets_profile_context_var_for_mcp_path(self, token_map, mock_load_token_map):
+        context_values = []
+
+        async def check_context(scope, receive, send):
+            context_values.append(current_profile.get())
+            await send({})
+
+        middleware = MCPTokenAuthMiddleware(check_context, token_map)
+
+        scope = {
+            "type": "http",
+            "path": "/mcp",
+            "headers": [(b"authorization", b"Bearer def456")],
+            "query_string": b"",
+        }
+        await middleware(scope, None, AsyncMock())
+
+        assert context_values == ["stone"]
+
+    @pytest.mark.asyncio
+    async def test_rejects_invalid_token_on_mcp_path(self, token_map, mock_load_token_map):
+        app = AsyncMock()
+        send = AsyncMock()
+        middleware = MCPTokenAuthMiddleware(app, token_map)
+
+        scope = {
+            "type": "http",
+            "path": "/mcp",
+            "headers": [(b"authorization", b"Bearer invalid-token")],
+            "query_string": b"",
+        }
+        await middleware(scope, None, send)
+
+        send.assert_called()
+        app.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_custom_protected_paths_override(self, token_map, mock_load_token_map):
+        # A custom protected_paths tuple (e.g. a configured, non-default
+        # streamable HTTP endpoint) should be honored instead of the default.
+        app = AsyncMock()
+        middleware = MCPTokenAuthMiddleware(app, token_map, protected_paths=("/custom-mcp",))
+
+        # Default "/mcp" path is no longer protected under the custom config.
+        scope = {
+            "type": "http",
+            "path": "/mcp",
+            "headers": [],
+            "query_string": b"",
+        }
+        await middleware(scope, None, AsyncMock())
+        app.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_custom_protected_paths_still_require_token(self, token_map, mock_load_token_map):
+        app = AsyncMock()
+        send = AsyncMock()
+        middleware = MCPTokenAuthMiddleware(app, token_map, protected_paths=("/custom-mcp",))
+
+        scope = {
+            "type": "http",
+            "path": "/custom-mcp",
+            "headers": [],
+            "query_string": b"",
+        }
+        await middleware(scope, None, send)
+
+        send.assert_called()
+        app.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # get_resources
@@ -296,3 +401,61 @@ class TestGetVersionInfo:
         with patch.object(Path, "parent") as parent_mock:
             parent_mock.resolve.return_value = temp_dir
             assert get_version_info() == "unknown build: dev"
+
+
+# ---------------------------------------------------------------------------
+# Streamable HTTP transport app (CM-2)
+# ---------------------------------------------------------------------------
+
+class TestStreamableHttpApp:
+    def test_builds_starlette_app_with_configured_path(self):
+        app = mcp.streamable_http_app(streamable_http_path="/mcp", host="0.0.0.0")
+        # Should be a Starlette app exposing the /mcp mount.
+        paths = [getattr(r, "path", None) for r in app.routes]
+        assert any(p and p.startswith("/mcp") for p in paths)
+
+    def test_custom_route_version_survives_on_streamable_http_app(self):
+        # /version is registered via @mcp.custom_route and must keep working
+        # regardless of which HTTP transport app it's mounted on.
+        from starlette.testclient import TestClient
+
+        app = mcp.streamable_http_app(streamable_http_path="/mcp", host="0.0.0.0")
+        client = TestClient(app)
+        response = client.get("/version")
+        assert response.status_code == 200
+
+    def test_honors_custom_streamable_http_path(self):
+        from starlette.testclient import TestClient
+
+        app = mcp.streamable_http_app(streamable_http_path="/custom-mcp", host="0.0.0.0")
+        client = TestClient(app)
+        response = client.get("/version")
+        assert response.status_code == 200
+        paths = [getattr(r, "path", None) for r in app.routes]
+        assert any(p and p.startswith("/custom-mcp") for p in paths)
+
+
+class TestStreamableHttpEndToEndAuth:
+    """Integration test: MCPTokenAuthMiddleware wrapping the real
+    streamable_http_app, exercising the full request path used when
+    CALENDAR_MCP_TRANSPORT=streamable-http."""
+
+    def test_rejects_unauthenticated_mcp_request(self):
+        from starlette.testclient import TestClient
+
+        app = mcp.streamable_http_app(streamable_http_path="/mcp", host="0.0.0.0")
+        with patch("mcp_server.load_token_profile_map", return_value={"tok": "default"}):
+            app.add_middleware(MCPTokenAuthMiddleware, token_map={"tok": "default"}, protected_paths=("/sse", "/mcp"))
+            client = TestClient(app)
+            response = client.post("/mcp", json={})
+            assert response.status_code == 401
+
+    def test_version_route_unaffected_by_auth_middleware(self):
+        from starlette.testclient import TestClient
+
+        app = mcp.streamable_http_app(streamable_http_path="/mcp", host="0.0.0.0")
+        with patch("mcp_server.load_token_profile_map", return_value={"tok": "default"}):
+            app.add_middleware(MCPTokenAuthMiddleware, token_map={"tok": "default"}, protected_paths=("/sse", "/mcp"))
+            client = TestClient(app)
+            response = client.get("/version")
+            assert response.status_code == 200

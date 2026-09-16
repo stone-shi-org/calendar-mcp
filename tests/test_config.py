@@ -150,6 +150,57 @@ class TestSettingsLoadForProfile:
                 assert s.profile_token == "token-from-os"
 
 
+class TestMcpTransportNormalization:
+    def test_default_is_stdio(self, clean_env):
+        s = Settings()
+        assert s.mcp_transport == "stdio"
+
+    def test_accepts_sse(self, clean_env):
+        s = Settings(mcp_transport="sse")
+        assert s.mcp_transport == "sse"
+
+    def test_accepts_streamable_http_hyphen(self, clean_env):
+        s = Settings(mcp_transport="streamable-http")
+        assert s.mcp_transport == "streamable-http"
+
+    def test_accepts_streamable_http_underscore_alias(self, clean_env):
+        s = Settings(mcp_transport="streamable_http")
+        assert s.mcp_transport == "streamable-http"
+
+    def test_normalizes_case_and_whitespace(self, clean_env):
+        s = Settings(mcp_transport=" Streamable_HTTP ")
+        assert s.mcp_transport == "streamable-http"
+
+    def test_env_var_streamable_http_underscore(self, clean_env):
+        with patch.dict(os.environ, {"CALENDAR_MCP_TRANSPORT": "streamable_http"}, clear=False):
+            s = Settings()
+            assert s.mcp_transport == "streamable-http"
+
+    def test_env_var_streamable_http_hyphen(self, clean_env):
+        with patch.dict(os.environ, {"CALENDAR_MCP_TRANSPORT": "streamable-http"}, clear=False):
+            s = Settings()
+            assert s.mcp_transport == "streamable-http"
+
+
+class TestMcpStreamableHttpPath:
+    def test_default_path_is_mcp(self, clean_env):
+        s = Settings()
+        assert s.mcp_streamable_http_path == "/mcp"
+
+    def test_custom_path_preserved(self, clean_env):
+        s = Settings(mcp_streamable_http_path="/custom-mcp")
+        assert s.mcp_streamable_http_path == "/custom-mcp"
+
+    def test_adds_missing_leading_slash(self, clean_env):
+        s = Settings(mcp_streamable_http_path="mcp")
+        assert s.mcp_streamable_http_path == "/mcp"
+
+    def test_env_var_override(self, clean_env):
+        with patch.dict(os.environ, {"CALENDAR_MCP_STREAMABLE_HTTP_PATH": "/custom"}, clear=False):
+            s = Settings()
+            assert s.mcp_streamable_http_path == "/custom"
+
+
 class TestSettingsAccountsJsonAlias:
     def test_uses_settings_field_as_fallback(self, clean_env):
         s = Settings(accounts=json.dumps([{"type": "caldav", "username": "u", "password": "p"}]))

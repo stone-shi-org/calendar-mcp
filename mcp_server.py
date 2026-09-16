@@ -130,18 +130,24 @@ def load_token_profile_map() -> Dict[str, str]:
     return token_map
 
 class MCPTokenAuthMiddleware:
-    def __init__(self, app, token_map: Dict[str, str]):
+    # Path prefixes that require a valid profile token. "/sse" is the SSE
+    # transport endpoint; "/mcp" (configurable via CALENDAR_MCP_STREAMABLE_HTTP_PATH)
+    # is the Streamable HTTP transport endpoint.
+    DEFAULT_PROTECTED_PATHS = ("/sse", "/mcp")
+
+    def __init__(self, app, token_map: Dict[str, str], protected_paths: Optional[tuple] = None):
         self.app = app
         self.token_map = token_map
+        self.protected_paths = protected_paths if protected_paths is not None else self.DEFAULT_PROTECTED_PATHS
 
     async def __call__(self, scope, receive, send):
         if scope["type"] in ("http", "websocket"):
             from starlette.datastructures import Headers, QueryParams
-            
+
             headers = Headers(scope=scope)
             path = scope.get("path", "")
-            
-            if path.startswith("/sse"):
+
+            if any(path.startswith(p) for p in self.protected_paths):
                 self.token_map = load_token_profile_map()
                 token = None
                 auth_header = headers.get("authorization")
@@ -337,20 +343,36 @@ async def get_version(request: Request) -> PlainTextResponse:
     return PlainTextResponse(get_version_info())
 
 if __name__ == "__main__":
-    if settings.mcp_transport == "sse":
+    if settings.mcp_transport in ("sse", "streamable-http"):
         import uvicorn
         import anyio
-        
+
         token_map = load_token_profile_map()
         masked_map = {k[:4] + "...": v for k, v in token_map.items()}
-        logger.info("Starting SSE MCP server. Loaded profile token mappings: %s", masked_map)
-        
-        # Get standard MCPServer SSE Starlette app
-        app = mcp.sse_app(host=settings.mcp_host, transport_security=security)
-        
+
+        # Protect both the SSE endpoint and the (possibly custom) Streamable
+        # HTTP endpoint path, regardless of which transport is actively running.
+        protected_paths = ("/sse", settings.mcp_streamable_http_path)
+
+        if settings.mcp_transport == "streamable-http":
+            logger.info(
+                "Starting Streamable HTTP MCP server at path '%s'. Loaded profile token mappings: %s",
+                settings.mcp_streamable_http_path, masked_map
+            )
+            # Get standard MCPServer Streamable HTTP Starlette app
+            app = mcp.streamable_http_app(
+                streamable_http_path=settings.mcp_streamable_http_path,
+                host=settings.mcp_host,
+                transport_security=security,
+            )
+        else:
+            logger.info("Starting SSE MCP server. Loaded profile token mappings: %s", masked_map)
+            # Get standard MCPServer SSE Starlette app
+            app = mcp.sse_app(host=settings.mcp_host, transport_security=security)
+
         # Add token validation middleware
-        app.add_middleware(MCPTokenAuthMiddleware, token_map=token_map)
-        
+        app.add_middleware(MCPTokenAuthMiddleware, token_map=token_map, protected_paths=protected_paths)
+
         async def run_server():
             config = uvicorn.Config(
                 app,
@@ -360,7 +382,7 @@ if __name__ == "__main__":
             )
             server = uvicorn.Server(config)
             await server.serve()
-            
+
         anyio.run(run_server)
     else:
         logger.info("Starting Stdio MCP server on stdin/stdout.")

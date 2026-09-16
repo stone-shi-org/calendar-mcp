@@ -35,12 +35,14 @@ You are a Senior Python Developer and AI Architect specialized in writing robust
 ---
 
 ## MCP Server Design System
-- **Dual Transports:** Exposes endpoints over Stdio or HTTP SSE.
-- **Starlette Auth Middleware:** In SSE mode, requests to the `/sse` route are validated by `MCPTokenAuthMiddleware`. The client must present the profile's token via:
+- **Three Transports:** Exposes endpoints over Stdio, HTTP SSE, or Streamable HTTP. Selected via `CALENDAR_MCP_TRANSPORT` (`stdio` | `sse` | `streamable-http`; `streamable_http` is accepted as an underscore alias and normalized to `streamable-http` by `Settings`).
+- **Streamable HTTP Endpoint:** When `CALENDAR_MCP_TRANSPORT=streamable-http`, the server builds its Starlette app via `mcp.streamable_http_app(streamable_http_path=settings.mcp_streamable_http_path, ...)`. The mount path defaults to `/mcp` and is configurable via `CALENDAR_MCP_STREAMABLE_HTTP_PATH`.
+- **Starlette Auth Middleware:** In SSE and Streamable HTTP modes, requests to the `/sse` and `/mcp` (or configured streamable path) routes are validated by `MCPTokenAuthMiddleware`, constructed with a `protected_paths` tuple covering both endpoints regardless of which transport is actively running. The client must present the profile's token via:
   - `Authorization: Bearer <token>` header
   - `X-Profile-Token: <token>` header
   - `?token=<token>` query parameter
-- **DNS Rebinding Protection:** Container deployments bind to `0.0.0.0` with `TransportSecuritySettings(enable_dns_rebinding_protection=False)` enabled to allow external clients to access the Starlette SSE endpoint.
+- **Custom Routes Survive Both Transports:** Routes registered via `@mcp.custom_route` (e.g. `/version`) are stored on `_custom_starlette_routes` and mounted by both `sse_app()` and `streamable_http_app()`, so they remain public/unauthenticated and available regardless of transport.
+- **DNS Rebinding Protection:** Container deployments bind to `0.0.0.0` with `TransportSecuritySettings(enable_dns_rebinding_protection=False)` enabled to allow external clients to access the Starlette SSE/Streamable HTTP endpoints.
 
 ---
 
