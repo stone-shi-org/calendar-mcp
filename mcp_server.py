@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """
 Model Context Protocol (MCP) Server for iCloud Calendar.
-Exposes CalDAV calendar operations to AI clients over stdio or SSE transport.
+Exposes CalDAV calendar operations to AI clients over stdio, SSE, and/or
+Streamable HTTP transport (the two HTTP transports can be run together).
 """
 
 import logging
 import sys
 import contextvars
+from contextlib import asynccontextmanager, AsyncExitStack
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 
@@ -83,6 +85,7 @@ mcp = RobustMCPServer(
     instructions=SERVER_INSTRUCTIONS
 )
 
+from starlette.applications import Starlette
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse, PlainTextResponse
 from starlette.requests import Request
@@ -342,33 +345,82 @@ def get_version_info() -> str:
 async def get_version(request: Request) -> PlainTextResponse:
     return PlainTextResponse(get_version_info())
 
+
+def build_http_app(
+    http_transports: List[str],
+    settings_instance: Settings,
+    transport_security: TransportSecuritySettings,
+):
+    """Builds a single Starlette ASGI app serving one or more HTTP transports
+    ("sse" and/or "streamable-http") together on the same port.
+
+    Merging is non-trivial for two reasons:
+      1. Each of mcp.sse_app()/mcp.streamable_http_app() independently mounts
+         the same custom routes (e.g. "/version"), so a naive concatenation
+         would register duplicate routes; identical Route objects are
+         deduped by identity.
+      2. mcp.streamable_http_app() relies on its own `lifespan` callback to
+         start/stop its StreamableHTTPSessionManager; dropping it would
+         silently break the Streamable HTTP endpoint. Each sub-app's lifespan
+         is entered together under one combined lifespan.
+
+    :param http_transports: non-empty subset of ["sse", "streamable-http"].
+    :return: (app, protected_paths) where protected_paths lists the path
+             prefixes MCPTokenAuthMiddleware should require a profile token
+             for, matching whichever transport(s) were actually mounted.
+    """
+    sub_apps = []
+    protected_paths: List[str] = []
+
+    if "sse" in http_transports:
+        sub_apps.append(mcp.sse_app(host=settings_instance.mcp_host, transport_security=transport_security))
+        protected_paths.append("/sse")
+
+    if "streamable-http" in http_transports:
+        sub_apps.append(mcp.streamable_http_app(
+            streamable_http_path=settings_instance.mcp_streamable_http_path,
+            host=settings_instance.mcp_host,
+            transport_security=transport_security,
+        ))
+        protected_paths.append(settings_instance.mcp_streamable_http_path)
+
+    if len(sub_apps) == 1:
+        return sub_apps[0], tuple(protected_paths)
+
+    combined_routes = []
+    seen_route_ids = set()
+    for sub_app in sub_apps:
+        for route in sub_app.routes:
+            if id(route) in seen_route_ids:
+                continue
+            seen_route_ids.add(id(route))
+            combined_routes.append(route)
+
+    @asynccontextmanager
+    async def combined_lifespan(app: Starlette):
+        async with AsyncExitStack() as stack:
+            for sub_app in sub_apps:
+                await stack.enter_async_context(sub_app.router.lifespan_context(sub_app))
+            yield
+
+    return Starlette(routes=combined_routes, lifespan=combined_lifespan), tuple(protected_paths)
+
+
 if __name__ == "__main__":
-    if settings.mcp_transport in ("sse", "streamable-http"):
+    http_transports = [t for t in settings.mcp_transports if t != "stdio"]
+
+    if http_transports:
         import uvicorn
         import anyio
 
         token_map = load_token_profile_map()
         masked_map = {k[:4] + "...": v for k, v in token_map.items()}
+        logger.info(
+            "Starting HTTP MCP server with transport(s): %s. Loaded profile token mappings: %s",
+            ", ".join(http_transports), masked_map
+        )
 
-        # Protect both the SSE endpoint and the (possibly custom) Streamable
-        # HTTP endpoint path, regardless of which transport is actively running.
-        protected_paths = ("/sse", settings.mcp_streamable_http_path)
-
-        if settings.mcp_transport == "streamable-http":
-            logger.info(
-                "Starting Streamable HTTP MCP server at path '%s'. Loaded profile token mappings: %s",
-                settings.mcp_streamable_http_path, masked_map
-            )
-            # Get standard MCPServer Streamable HTTP Starlette app
-            app = mcp.streamable_http_app(
-                streamable_http_path=settings.mcp_streamable_http_path,
-                host=settings.mcp_host,
-                transport_security=security,
-            )
-        else:
-            logger.info("Starting SSE MCP server. Loaded profile token mappings: %s", masked_map)
-            # Get standard MCPServer SSE Starlette app
-            app = mcp.sse_app(host=settings.mcp_host, transport_security=security)
+        app, protected_paths = build_http_app(http_transports, settings, security)
 
         # Add token validation middleware
         app.add_middleware(MCPTokenAuthMiddleware, token_map=token_map, protected_paths=protected_paths)
@@ -386,4 +438,4 @@ if __name__ == "__main__":
         anyio.run(run_server)
     else:
         logger.info("Starting Stdio MCP server on stdin/stdout.")
-        mcp.run(transport=settings.mcp_transport)
+        mcp.run(transport=settings.mcp_transports[0])

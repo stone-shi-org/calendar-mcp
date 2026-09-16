@@ -181,6 +181,50 @@ class TestMcpTransportNormalization:
             s = Settings()
             assert s.mcp_transport == "streamable-http"
 
+    # -- Combined SSE + Streamable HTTP transports --
+
+    def test_accepts_comma_separated_sse_and_streamable_http(self, clean_env):
+        s = Settings(mcp_transport="sse,streamable-http")
+        assert s.mcp_transport == "sse,streamable-http"
+        assert s.mcp_transports == ["sse", "streamable-http"]
+
+    def test_normalizes_each_entry_in_combined_list(self, clean_env):
+        s = Settings(mcp_transport=" SSE , streamable_http ")
+        assert s.mcp_transport == "sse,streamable-http"
+        assert s.mcp_transports == ["sse", "streamable-http"]
+
+    def test_dedupes_repeated_entries(self, clean_env):
+        s = Settings(mcp_transport="sse,sse,streamable-http,streamable_http")
+        assert s.mcp_transport == "sse,streamable-http"
+        assert s.mcp_transports == ["sse", "streamable-http"]
+
+    def test_order_is_preserved(self, clean_env):
+        s = Settings(mcp_transport="streamable-http,sse")
+        assert s.mcp_transport == "streamable-http,sse"
+        assert s.mcp_transports == ["streamable-http", "sse"]
+
+    def test_stdio_combined_with_other_transport_raises(self, clean_env):
+        with pytest.raises(Exception):
+            Settings(mcp_transport="stdio,sse")
+
+    def test_invalid_transport_raises(self, clean_env):
+        with pytest.raises(Exception):
+            Settings(mcp_transport="carrier-pigeon")
+
+    def test_invalid_transport_in_list_raises(self, clean_env):
+        with pytest.raises(Exception):
+            Settings(mcp_transport="sse,carrier-pigeon")
+
+
+class TestMcpTransportsProperty:
+    def test_single_transport_list(self, clean_env):
+        s = Settings(mcp_transport="stdio")
+        assert s.mcp_transports == ["stdio"]
+
+    def test_multi_transport_list(self, clean_env):
+        s = Settings(mcp_transport="sse,streamable-http")
+        assert s.mcp_transports == ["sse", "streamable-http"]
+
 
 class TestMcpStreamableHttpPath:
     def test_default_path_is_mcp(self, clean_env):

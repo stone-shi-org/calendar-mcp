@@ -5,12 +5,16 @@ from unittest.mock import MagicMock, patch, AsyncMock, mock_open
 
 import pytest
 
+from mcp.server.transport_security import TransportSecuritySettings
+
+from config import Settings
 from mcp_server import (
     RobustMCPServer,
     load_token_profile_map,
     MCPTokenAuthMiddleware,
     get_resources,
     get_version_info,
+    build_http_app,
     current_profile,
     mcp,
     SERVER_INSTRUCTIONS,
@@ -459,3 +463,97 @@ class TestStreamableHttpEndToEndAuth:
             client = TestClient(app)
             response = client.get("/version")
             assert response.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# build_http_app: running SSE and Streamable HTTP together (CM-2 follow-up)
+# ---------------------------------------------------------------------------
+
+class TestBuildHttpApp:
+    @pytest.fixture
+    def security(self):
+        return TransportSecuritySettings(enable_dns_rebinding_protection=False)
+
+    @pytest.fixture
+    def base_settings(self, clean_env):
+        return Settings(mcp_host="0.0.0.0")
+
+    def test_sse_only_returns_unwrapped_sub_app(self, base_settings, security):
+        app, protected_paths = build_http_app(["sse"], base_settings, security)
+        assert protected_paths == ("/sse",)
+        paths = [r.path for r in app.routes]
+        assert "/sse" in paths
+        assert "/mcp" not in paths
+        assert "/version" in paths
+
+    def test_streamable_http_only_returns_unwrapped_sub_app(self, base_settings, security):
+        app, protected_paths = build_http_app(["streamable-http"], base_settings, security)
+        assert protected_paths == ("/mcp",)
+        paths = [r.path for r in app.routes]
+        assert "/mcp" in paths
+        assert "/sse" not in paths
+        assert "/version" in paths
+
+    def test_combined_transports_expose_both_endpoints(self, base_settings, security):
+        app, protected_paths = build_http_app(["sse", "streamable-http"], base_settings, security)
+        assert protected_paths == ("/sse", "/mcp")
+        paths = [r.path for r in app.routes]
+        assert "/sse" in paths
+        assert "/messages" in paths
+        assert "/mcp" in paths
+        assert "/version" in paths
+
+    def test_combined_transports_do_not_duplicate_custom_routes(self, base_settings, security):
+        # /version is registered via @mcp.custom_route and is mounted by both
+        # sse_app() and streamable_http_app() independently; the combined app
+        # must dedupe it rather than registering it twice.
+        app, _ = build_http_app(["sse", "streamable-http"], base_settings, security)
+        version_routes = [r for r in app.routes if r.path == "/version"]
+        assert len(version_routes) == 1
+
+    def test_combined_transports_respect_custom_streamable_http_path(self, security, clean_env):
+        s = Settings(mcp_host="0.0.0.0", mcp_streamable_http_path="/custom-mcp")
+        app, protected_paths = build_http_app(["sse", "streamable-http"], s, security)
+        assert protected_paths == ("/sse", "/custom-mcp")
+        paths = [r.path for r in app.routes]
+        assert "/custom-mcp" in paths
+
+    def test_combined_app_version_route_reachable(self, base_settings, security):
+        from starlette.testclient import TestClient
+
+        app, _ = build_http_app(["sse", "streamable-http"], base_settings, security)
+        client = TestClient(app)
+        response = client.get("/version")
+        assert response.status_code == 200
+
+    def test_combined_app_starts_streamable_http_session_manager(self, base_settings, security):
+        # The combined app's lifespan must still enter streamable_http_app()'s
+        # own lifespan, which starts the StreamableHTTPSessionManager. If that
+        # lifespan were dropped, POSTs to /mcp would fail outright (e.g. 500)
+        # instead of reaching normal MCP protocol-level handling.
+        from starlette.testclient import TestClient
+
+        app, _ = build_http_app(["sse", "streamable-http"], base_settings, security)
+        with TestClient(app) as client:
+            response = client.post(
+                "/mcp",
+                json={"jsonrpc": "2.0", "method": "ping", "id": 1},
+                headers={"accept": "application/json, text/event-stream"},
+            )
+            # A running session manager rejects this as a bad MCP request
+            # (400/406-ish) rather than erroring out with a 500 from a
+            # missing/never-started session manager.
+            assert response.status_code < 500
+
+    def test_combined_app_auth_middleware_protects_both_endpoints(self, base_settings, security):
+        from starlette.testclient import TestClient
+
+        app, protected_paths = build_http_app(["sse", "streamable-http"], base_settings, security)
+        with patch("mcp_server.load_token_profile_map", return_value={"tok": "default"}):
+            app.add_middleware(MCPTokenAuthMiddleware, token_map={"tok": "default"}, protected_paths=protected_paths)
+            with TestClient(app) as client:
+                mcp_response = client.post("/mcp", json={})
+                assert mcp_response.status_code == 401
+
+                version_response = client.get("/version")
+                assert version_response.status_code == 200

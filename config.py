@@ -86,13 +86,49 @@ class Settings(BaseSettings):
     @field_validator("mcp_transport", mode="before")
     @classmethod
     def _normalize_mcp_transport(cls, v):
-        """Normalize CALENDAR_MCP_TRANSPORT so "streamable_http" (underscore) is
-        accepted as an alias of the canonical "streamable-http" (hyphen) value
-        expected by the mcp SDK, and so casing/whitespace don't matter."""
-        if isinstance(v, str):
-            normalized = v.strip().lower()
-            return _TRANSPORT_ALIASES.get(normalized, normalized)
-        return v
+        """Normalize CALENDAR_MCP_TRANSPORT.
+
+        Accepts a single transport ("stdio", "sse", "streamable-http") or a
+        comma-separated list of HTTP transports to run together on one server
+        (e.g. "sse,streamable-http"), so both endpoints can be enabled at
+        once. "streamable_http" (underscore) is accepted as an alias of the
+        canonical "streamable-http" (hyphen) value expected by the mcp SDK.
+        Casing/whitespace around each entry don't matter. Duplicate entries
+        are collapsed. "stdio" cannot be combined with other transports,
+        since it takes over the process's stdin/stdout instead of running an
+        HTTP server.
+        """
+        if not isinstance(v, str):
+            return v
+
+        parts = [p.strip().lower() for p in v.split(",") if p.strip()]
+        parts = [_TRANSPORT_ALIASES.get(p, p) for p in parts]
+
+        # Dedupe while preserving order.
+        deduped: List[str] = []
+        for p in parts:
+            if p not in deduped:
+                deduped.append(p)
+
+        if not deduped:
+            return "stdio"
+
+        for p in deduped:
+            if p not in VALID_MCP_TRANSPORTS:
+                raise ValueError(
+                    f"CALENDAR_MCP_TRANSPORT: invalid transport '{p}'. "
+                    f"Valid values: {', '.join(VALID_MCP_TRANSPORTS)} "
+                    "(comma-separated to run multiple HTTP transports together, "
+                    "e.g. 'sse,streamable-http')."
+                )
+
+        if "stdio" in deduped and len(deduped) > 1:
+            raise ValueError(
+                "CALENDAR_MCP_TRANSPORT: 'stdio' cannot be combined with other "
+                f"transports (got '{','.join(deduped)}')."
+            )
+
+        return ",".join(deduped)
 
     @field_validator("mcp_streamable_http_path", mode="before")
     @classmethod
@@ -100,6 +136,12 @@ class Settings(BaseSettings):
         if isinstance(v, str) and v and not v.startswith("/"):
             return "/" + v
         return v
+
+    @property
+    def mcp_transports(self) -> List[str]:
+        """Parsed, deduped list of configured transports, e.g. ["sse"] or
+        ["sse", "streamable-http"] when both are enabled together."""
+        return [p for p in self.mcp_transport.split(",") if p]
 
     @property
     def accounts(self) -> List[AccountConfig]:

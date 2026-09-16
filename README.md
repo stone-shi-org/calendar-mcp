@@ -48,7 +48,15 @@ CALENDAR_MCP_STREAMABLE_HTTP_PATH=/mcp
 ```
 
 `CALENDAR_MCP_TRANSPORT` accepts `stdio`, `sse`, or `streamable-http` (the
-underscore spelling `streamable_http` is also accepted as an alias).
+underscore spelling `streamable_http` is also accepted as an alias). You can
+also run **both HTTP transports at once, on the same port**, with a
+comma-separated value:
+```bash
+CALENDAR_MCP_TRANSPORT=sse,streamable-http
+```
+This exposes `/sse` and `/mcp` (plus `/version`) together from a single
+`uvicorn` server on `CALENDAR_MCP_PORT`. `stdio` cannot be combined with
+other transports.
 
 ### 2. Multi-Profile Configuration
 
@@ -109,6 +117,14 @@ export CALENDAR_MCP_TRANSPORT=streamable-http
 ./venv/bin/python mcp_server.py
 ```
 The server will start an HTTP service (defaulting to `http://0.0.0.0:8000`) exposing the Streamable HTTP endpoint at `/mcp` (configurable via `CALENDAR_MCP_STREAMABLE_HTTP_PATH`). As with SSE, requests must present a valid profile token (see below).
+
+### Option D: Running SSE and Streamable HTTP Together
+To support both legacy SSE clients and newer Streamable HTTP clients from one process/port, set a comma-separated transport list:
+```bash
+export CALENDAR_MCP_TRANSPORT=sse,streamable-http
+./venv/bin/python mcp_server.py
+```
+The server will start a single HTTP service (defaulting to `http://0.0.0.0:8000`) exposing `/sse`, `/mcp`, and `/version` together. Each endpoint is still gated independently by `MCPTokenAuthMiddleware` using the same profile tokens.
 
 ---
 
